@@ -7,6 +7,7 @@ np.set_printoptions(suppress=True)
 
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation
+from keras.layers import LSTM, SimpleRNN, GRU
 from keras.utils import np_utils
 from keras.optimizers import SGD
 import os, math, time
@@ -51,39 +52,27 @@ def parse(d, keyword, op, Y_fn=False):
 			ts = 0
 			init_ts = -1
 
-
+			lastAttackOS = -1
+			attacks = []
 
 			for l in lines:
 				if not l.startswith("#"): #and l.startswith("attackInfo"):
 					s = l.split(',')
-					if len(s) < 12:
-						continue
-					ts = long(s[11])
-					if init_ts < 0:
-						init_ts = ts
-						num_attacks = 0
-						max_dist = -1.0
-						max_angle = -1.0
-						vel_total = []
-						vel_count = 0
 					if l.startswith("attackInfo"):
-						num_attacks += 1
-						max_dist = max(float(s[8]), max_dist)
-						max_angle = max(abs(float(s[7])), max_angle)
-					if l.startswith("move"):
-						if s[12].isdigit():
-							if int(s[12]) != 0:
-								vel_count += 1
-								vel_total.append(abs(float(s[1]) / (float(s[12])/1000)))
-								#print(abs(float(s[1]) / (float(s[12])/1000)), f, ts)
-					if ts - init_ts > 5*1000 - 1:
-						init_ts = -1
-						if num_attacks != 0:
-							examples.append([num_attacks / 10.0, max_angle, max_dist, np.median(vel_total)])
-							if Y_fn:
-								labels.append(f)
-							else:
-								labels.append(op[:])
+						if lastAttackOS < 0:
+							lastAttackOS = long(s[11])
+						else:
+							v = [int(long(s[11]) - lastAttackOS), float(s[7]), float(s[8])]
+							attacks.append(v)
+							lastAttackOS = long(s[11])
+					if len(attacks) == 20:
+						examples.append(attacks)
+						if Y_fn:
+							labels.append(f)
+						else:
+							labels.append(op[:])
+						attacks = []
+
 	return np.asarray(examples), np.asarray(labels)
 
 
@@ -98,9 +87,9 @@ shuffle_in_unison_inplace(X_hac, Y_hac)
 X_hac = X_hac[:len(X_van)]
 Y_hac = Y_hac[:len(X_van)]
 
-# print(X_van)
+# print(X_van[:3])
 # print("Hack:")
-# print(X_hac)
+# print(X_hac[:3])
 # exit()
 
 print("Support for each class: ", len(X_van))
@@ -116,31 +105,30 @@ X_test = np.concatenate((X_van[van_l:], X_hac[hac_l:]), axis=0)
 Y_test = np.concatenate((Y_van[van_l:], Y_hac[hac_l:]), axis=0)
 
 model = Sequential()
-model.add(Dense(20, input_dim=4, init='uniform'))
-model.add(Activation('tanh'))
-model.add(Dense(2, init='uniform'))
-model.add(Activation('softmax'))
+model.add(LSTM(32, input_dim=3, input_length=20))
+model.add(Dense(2))
+model.add(Activation('sigmoid'))
 
-sgd = SGD(lr=0.005, decay=1e-6, momentum=0.9, nesterov=True)
 model.compile(loss='binary_crossentropy',
-              optimizer=sgd,
+              optimizer='adam',
               metrics=['accuracy'])
 
-model.load_weights('prelim_4feats_as.2.h5')
+model.load_weights('prelim_lstm.h5')
 
-# model.fit(X_train, Y_train,
-#          nb_epoch=500, batch_size=16)
+#model.fit(X_train, Y_train, nb_epoch=100, batch_size=16)
 
-# score = model.evaluate(X_test, Y_test, batch_size=16)
+#model.save_weights('prelim_lstm.h5')
 
-# for i in range(len(model.metrics_names)):
-# 	print(model.metrics_names[i], score[i])
+score = model.evaluate(X_test, Y_test, batch_size=16)
 
-#model.save_weights('prelim_4feats_as.2.h5')
+for i in range(len(score)):
+	print(model.metrics_names[i], score[i])
 
-X_test, Y_test = parse("C:\\Users\\shrey\\Downloads\\Telegram Desktop", ".csv", [0, 1], Y_fn=True)
 
-with Timer("perdiction"):
+#X_test, Y_test = parse("C:\\Users\\shrey\\Downloads\\Telegram Desktop", ".csv", [0, 1], Y_fn=True)
+X_test, Y_test = parse("D:\\Downloads\\HALData-master\\UnidentifiedHacks", ".csv", [0, 1], Y_fn=True)
+
+with Timer("perdiction"): # the spelling mistake is intentional
 	pred_probas = model.predict_proba(X_test, batch_size=16)
 pred = probas_to_classes(pred_probas)
 actual = probas_to_classes(Y_test)
@@ -149,6 +137,3 @@ for p, a, c in zip(pred, Y_test, pred_probas):
 	print(p, a, c)
 # print('Test score:', score[0])
 # print('Test accuracy:', score[1])
-
-print(X_test)
-print(Y_test)
